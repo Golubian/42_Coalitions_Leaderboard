@@ -2,9 +2,11 @@ from flask import Flask
 from flask import render_template
 import json
 import requests
+import threading
 from credentials import *
 
 app = Flask(__name__)
+global old_data
 
 svgs = {
 	"torrent": """<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" version="1.1" id="Calque_1" x="0px" y="0px" viewBox="0 0 344.1 431" style="enable-background:new 0 0 344.1 431;fill: #fff" xml:space="preserve" class="coalition-flag--icon">
@@ -50,7 +52,6 @@ def get_token():
 		"client_secret" : secret,
 		"client_id" : uid,
 	}
-
 	token_response = requests.post(auth_server_url,
 	data=token_req_payload, verify=False, allow_redirects=False)
 	return json.loads(token_response.text)
@@ -80,8 +81,48 @@ def get_token():
 # 					}
 # 				],
 
+#242 Torrent
+#243 Legion
+#249 L'Armada
+
+def get_users(token):
+	user_data = {
+		"armada": {
+			"id": 249,
+			"users": []
+		},
+
+		"la_légion": {
+			"id": 243,
+			"users": []
+		},
+
+		"torrent": {
+			"id": 242,
+			"users": []
+		},
+	}
+
+	for coalition in user_data:
+		api_call_headers = {'Authorization': 'Bearer ' + token['access_token']}
+		api_call_response = json.loads(requests.get("https://api.intra.42.fr/v2/coalitions/" + str(user_data[coalition]['id']) + "/coalitions_users?page[size]=3&sort[this_year_score]", headers=api_call_headers, verify=False).text)
+		for user in api_call_response:
+			api_call_response_login = json.loads(requests.get("https://api.intra.42.fr/v2/users/" + str(user['user_id']), headers=api_call_headers, verify=False).text)
+			user_data[coalition]["users"].append(
+				{
+					'id': user['user_id'],
+					'score': user['score'],
+					'position': user['rank'],
+					'name': api_call_response_login['usual_full_name'],
+					'username': api_call_response_login['login'],
+					'avatar': api_call_response_login['image']['link']
+				}
+			)
+	return (user_data)
+
 def get_coalition_data():
 	token = get_token()
+	user_data = get_users(token)
 	api_call_headers = {'Authorization': 'Bearer ' + token['access_token']}
 	api_call_response = requests.get("https://api.intra.42.fr/v2/blocs/70", headers=api_call_headers, verify=False)
 	coalition_data: list = json.loads(api_call_response.text)['coalitions']
@@ -108,29 +149,7 @@ def get_coalition_data():
 			"position": 1,
 			"heigth": "60%",
 			"score": None,
-			"users": [
-					{
-						"avatar" : "https://cdn.intra.42.fr/users/120fd9a78cad62db47d3c39c42ae8c20/vst-pier.jpg",
-						"username" : "vst-pier",
-						"name" : "Valerie St-Pierre",
-						"score" : "105",
-						"position" : "1",
-					},
-					{
-						"avatar" : "https://cdn.intra.42.fr/users/120fd9a78cad62db47d3c39c42ae8c20/vst-pier.jpg",
-						"username" : "vst-pier 2",
-						"name" : "Valerie St-Pierre 2",
-						"score" : "92",
-						"position" : "2",
-					},
-					{
-						"avatar" : "https://cdn.intra.42.fr/users/120fd9a78cad62db47d3c39c42ae8c20/vst-pier.jpg",
-						"username" : "vst-pier 3",
-						"name" : "Valerie St-Pierre 3",
-						"score" : "35",
-						"position" : "3",
-					}
-				],
+			"users": user_data[str.lower(coalition['slug'])]['users']
 		}
 		data['name'] = str.lower(coalition['slug'])
 		data['svg'] = svgs[str.lower(coalition['slug'])]
@@ -147,12 +166,17 @@ def get_coalition_data():
 		elif (position == 0):
 			coalitions_data.insert(1, data)
 
+	global old_data
+	old_data = coalitions_data
 	return (coalitions_data)
+
+get_coalition_data()
 
 @app.route("/")
 def	get():
+	threading.Thread(target=get_coalition_data)
 	return render_template('index.jinja', data={
-		"coalitions": get_coalition_data(),
+		"coalitions": old_data,
 	})
 
 app.run(host="0.0.0.0", port=80)
